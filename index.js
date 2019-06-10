@@ -2,12 +2,14 @@
 const express = require('express');
 const rp = require('request-promise');
 const app = express();
+const path = require('path');
 
 const { createCanvas, loadImage } = require('canvas');
 const cors = require('cors');
 
 app.use(cors({ origin: true }));
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'uploads')));
 
 app.get('/', (request, response) => {
     response.send('Warming up friend.');
