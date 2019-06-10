@@ -8,8 +8,14 @@ const { createCanvas, loadImage } = require('canvas');
 const cors = require('cors');
 
 app.use(cors({ origin: true }));
-app.use(express.json());
+//app.use(express.json());
 app.use(express.static(path.join(__dirname, 'uploads')));
+
+var bodyParser = require('body-parser');
+app.use(bodyParser.json({limit: '50mb'}));
+app.use(bodyParser.urlencoded({limit: '50mb', extended: true}));
+//app.use(express.json({limit:'50mb'}));
+//app.use(express.urlencoded({ limit: '50mb', extended: true, parameterLimit: 50000 }));
 
 app.get('/', (request, response) => {
     response.send('Warming up friend.');
@@ -24,7 +30,7 @@ app.post('/face-detection-url', async function (req, res) {
         const body = JSON.parse(response.body);
         const faces = body.faces;
         const image = await loadImage(imageUrl);
-        const imageName = strategyDetection.hightlightFaces(faces,image);
+        const imageName = await strategyDetection.hightlightFaces(faces,image);
         res.send({ imageName: imageName, faces: faces });
     } else {
         res.send({});
@@ -39,7 +45,7 @@ app.post('/face-detection-upload', async function (req, res) {
         const body = JSON.parse(response.body);
         const faces = body.faces;
         const image = await loadImage(base64Image);
-        const imageName = strategyDetection.hightlightFaces(faces,image);
+        const imageName = await strategyDetection.hightlightFaces(faces,image);
         res.send({ imageName: imageName, faces: faces });
     } else {
         res.send({});
@@ -88,7 +94,7 @@ class Detection {
         return Object.assign(form, dataImage);
     }
 
-    hightlightFaces(faces, image) {
+    async hightlightFaces(faces, image) {
         const canvas = createCanvas(image.width, image.height)
         const context = canvas.getContext('2d');
         context.drawImage(image, 0, 0, image.width, image.height)
@@ -126,16 +132,21 @@ class Detection {
            context.lineTo(origX+30, origY + face_rectangle.height+textHeight);
            context.stroke();
         });
-        const fs = require('fs');
-        const path = require('path');
-        const image_name = Date.now()+".png";
-        const image_path = __dirname + "/uploads/"+ image_name;
-        const out = fs.createWriteStream(image_path);
-        const stream = canvas.createPNGStream();
-        stream.pipe(out);
-        out.on('finish', () =>  console.log('The PNG file was created.'))
+        const image_name = Date.now()+".jpg";
+        await this.createFile(image_name,canvas);
         return image_name;
-     };
+    };
+
+    createFile(image_name,canvas){
+        return new Promise(resolve => {
+            const fs = require('fs');
+            const image_path = __dirname + "/uploads/"+ image_name;
+            const out = fs.createWriteStream(image_path);
+            const stream = canvas.createJPEGStream();
+            stream.pipe(out);
+            out.on('finish', resolve);
+        });
+    }
 }
 
 class DetectionWithImageUrl extends Detection {
