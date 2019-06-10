@@ -140,7 +140,11 @@ class Detection {
     createFile(image_name,canvas){
         return new Promise(resolve => {
             const fs = require('fs');
-            const image_path = __dirname + "/uploads/"+ image_name;
+            const dir = __dirname + "/uploads/";
+            if (!fs.existsSync(dir)){
+                fs.mkdirSync(dir);
+            }
+            const image_path = dir + image_name;
             const out = fs.createWriteStream(image_path);
             const stream = canvas.createJPEGStream();
             stream.pipe(out);
