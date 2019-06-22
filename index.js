@@ -1,168 +1,142 @@
 
 const express = require('express');
-const rp = require('request-promise');
-const app = express();
+const bodyParser = require('body-parser');
+const mongodb = require("mongodb");
+const multer = require('multer');
+//const storage = multer.memoryStorage();
+//const upload = multer({ dest: './uploads', storage: storage });
 const path = require('path');
-
-const { createCanvas, loadImage } = require('canvas');
 const cors = require('cors');
+const facePlusPlus = require("./functions/face-plus-plus/index.js");
+const FACES_COLLECTION = "faces";
+
+const app = express();
 
 app.use(cors({ origin: true }));
-//app.use(express.json());
 app.use(express.static(path.join(__dirname, 'uploads')));
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
-var bodyParser = require('body-parser');
-app.use(bodyParser.json({limit: '50mb'}));
-app.use(bodyParser.urlencoded({limit: '50mb', extended: true}));
-//app.use(express.json({limit:'50mb'}));
-//app.use(express.urlencoded({ limit: '50mb', extended: true, parameterLimit: 50000 }));
+var db;
+var ObjectID = mongodb.ObjectID;
 
+// Connect to the database before starting the application server.
+mongodb.MongoClient.connect(process.env.MONGODB_URI || "mongodb://localhost:27017/test", function (err, client) {
+    if (err) {
+        console.log(err);
+        process.exit(1);
+    }
+
+    // Save database object from the callback for reuse.
+    db = client.db();
+    console.log("Database connection ready");
+
+    // Initialize the app.
+    var server = app.listen(process.env.PORT || 8080, function () {
+        var port = server.address().port;
+        console.log("App now running on port", port);
+    });
+});
+
+// Generic error handler used by all endpoints.
+function handleError(res, reason, message, code) {
+    console.log("ERROR: " + reason);
+    res.status(code || 500).json({ "error": message });
+}
+
+function createNewFace(dataResponse){
+    var face = dataResponse.faces[0];
+    var attributes = face.attributes;
+    const newFace ={
+        userid: 0,
+        age: attributes.age.value,
+        gender: attributes.gender.value,
+        dark_circle: attributes.skinstatus.dark_circle,
+        stain: attributes.skinstatus.stain,
+        acne: attributes.skinstatus.acne,
+        health: attributes.skinstatus.health,
+        image: dataResponse.croppedImage,
+        createDate: new Date()
+    }
+    return newFace;
+}
+
+// FACES API ROUTES BELOW
 app.get('/', (request, response) => {
     response.send('Warming up friend.');
 });
 
-app.post('/face-detection-url', async function (req, res) {
-    const imageUrl = req.body.imageUrl;
-    const strategyDetection = new DetectionWithImageUrl(imageUrl);
-    const response = await strategyDetection.detectImage();
-
-    if (response.statusCode === 200) {
-        const body = JSON.parse(response.body);
-        const faces = body.faces;
-        const image = await loadImage(imageUrl);
-        const imageName = await strategyDetection.hightlightFaces(faces,image);
-        res.send({ imageName: imageName, faces: faces });
-    } else {
-        res.send({});
-    }
-});
-
-app.post('/face-detection-upload', async function (req, res) {
-    const base64Image = req.body.base64Image;
-    const strategyDetection = new DetectionWithImageUpload(base64Image);
-    const response = await strategyDetection.detectImage();
-    if (response.statusCode === 200) {
-        const body = JSON.parse(response.body);
-        const faces = body.faces;
-        const image = await loadImage(base64Image);
-        const imageName = await strategyDetection.hightlightFaces(faces,image);
-        res.send({ imageName: imageName, faces: faces });
-    } else {
-        res.send({});
-    }
-});
-
-app.listen(process.env.PORT || 4000, function(){
-    console.log('Your node js server is running');
-});
-
-const CANVAS_COLOR = '#28a745';
-const HEADERS = {
-    'Content-Type': "application/x-www-form-urlencoded"
-};
-
-const API = {
-    "URL": "https://api-us.faceplusplus.com/facepp/v3/detect",
-    "API_KEY": "N6XmyTUrxjI5Q6TBIqiIjx7FIlHSPIJJ",
-    "API_SECRET": "uikapL6u72QPPnK23JNbEVwF7SYlOfU8",
-    "RETURN_ATTRIBUTES": "gender,age,emotion,skinstatus"
-}
-
-class Detection {
-    constructor(strImage) {
-        this.strImage = strImage;
-    }
-
-    async doRequest(formBody) {
-        const options = {
-            method: 'POST',
-            url: API.URL,
-            headers: HEADERS,
-            form: formBody,
-            resolveWithFullResponse: true
+/*  "/api/faces"
+ *    GET: finds all faces
+ *    POST: creates a new face
+ */
+app.get("/api/faces/:userid", function (req, res) {
+    db.collection(FACES_COLLECTION).find({ userid: req.params.userid }).toArray(function (err, docs) {
+        if (err) {
+            handleError(res, err.message, "Failed to get faces.");
+        } else {
+            res.status(200).json(docs);
         }
-        const res = await rp(options);
-        return res;
-    };
+    });
+});
 
-    createFormToDetect(dataImage) {
-        const form = {
-            api_key: API.API_KEY,
-            api_secret: API.API_SECRET,
-            return_attributes: API.RETURN_ATTRIBUTES
-        };
-        return Object.assign(form, dataImage);
-    }
+app.post("/api/faces", async function (req, res) {
+    //Send Request to Face++
+    const dataResponse = await facePlusPlus(req.body);
 
-    async hightlightFaces(faces, image) {
-        const canvas = createCanvas(image.width, image.height)
-        const context = canvas.getContext('2d');
-        context.drawImage(image, 0, 0, image.width, image.height)
-        // Now draw boxes around all the faces
-        context.strokeStyle = CANVAS_COLOR;
-     
-        faces.forEach((face, i) => {
-           context.lineWidth = '5';
-           let face_rectangle = face.face_rectangle;
-           context.beginPath();
-           const origX = face_rectangle.left;
-           const origY = face_rectangle.top;
-           context.lineTo(origX, origY);
-           context.lineTo(origX + face_rectangle.width, origY);
-           context.lineTo(origX + face_rectangle.width, origY + face_rectangle.height);
-           context.lineTo(origX, origY + face_rectangle.height);
-           context.lineTo(origX, origY);
-     
-           // Text zone
-           const textWidth = 80;
-           const textHeight = 30;
-           context.font = '20px Impact';
-           context.fillStyle = CANVAS_COLOR;
-           
-           context.fillRect(origX+30, origY + face_rectangle.height+30, textWidth, textHeight);
-           
-           const strFace = "Face " +(i+1);
-           context.fillStyle = "#FFF";
-           context.textAlign = "center";
-           context.fillText(strFace, origX+30+textWidth/2, origY + face_rectangle.height+40+textHeight/2);
-           context.stroke();
-     
-           context.lineWidth = '2';
-           context.moveTo(origX, origY + face_rectangle.height);
-           context.lineTo(origX+30, origY + face_rectangle.height+textHeight);
-           context.stroke();
-        });
-        const image_name = Date.now()+".jpg";
-        await this.createFile(image_name,canvas);
-        return image_name;
-    };
+    //Save new face to Database
+    const newFace = createNewFace(dataResponse);
+    db.collection(FACES_COLLECTION).insertOne(newFace, function (err, doc) {
+        if (err) {
+            handleError(res, err.message, "Failed to create new face.");
+        } else {
+            res.send(dataResponse);
+        }
+    });
+});
 
-    createFile(image_name,canvas){
-        return new Promise(resolve => {
-            const fs = require('fs');
-            const dir = __dirname + "/uploads/";
-            if (!fs.existsSync(dir)){
-                fs.mkdirSync(dir);
-            }
-            const image_path = dir + image_name;
-            const out = fs.createWriteStream(image_path);
-            const stream = canvas.createJPEGStream();
-            stream.pipe(out);
-            out.on('finish', resolve);
-        });
-    }
-}
+/*  "/api/faces/:id"
+ *    GET: find faces by id
+ *    DELETE: deletes face by id
+ */
 
-class DetectionWithImageUrl extends Detection {
-    detectImage() {
-        const dataForm = this.createFormToDetect({ image_url: this.strImage });
-        return this.doRequest(dataForm);
-    }
-}
+app.get("/api/faces/:id", function (req, res) {
+    db.collection(FACES_COLLECTION).findOne({ _id: req.params.id }, function (err, doc) {
+        if (err) {
+            handleError(res, err.message, "Failed to get face");
+        } else {
+            res.status(200).json(doc);
+        }
+    });
+});
 
-class DetectionWithImageUpload extends Detection {
-    detectImage() {
-        const dataForm = this.createFormToDetect({ image_base64: this.strImage });
-        return this.doRequest(dataForm);
-    }
-}
+app.delete("/api/faces/:id", function (req, res) {
+    db.collection(FACES_COLLECTION).deleteOne({ _id: new ObjectID(req.params.id) }, function (err, result) {
+        if (err) {
+            handleError(res, err.message, "Failed to delete contact");
+        } else {
+            res.status(200).json(req.params.id);
+        }
+    });
+});
+
+// class DetectionWithImageFile extends Detection {
+//     detectImage() {
+//         const dataForm = this.createFormToDetect({ image_file: this.strImage });
+//         return this.doRequest(dataForm, "file");
+//     }
+// }
+// app.post('/face-detection-file', upload.single('fileImage'), async function (req, res) {
+//     const fileImage = req.file.buffer;
+//     const strategyDetection = new DetectionWithImageFile(fileImage);
+//     const response = await strategyDetection.detectImage();
+//     if (response.statusCode === 200) {
+//         const body = JSON.parse(response.body);
+//         const faces = body.faces;
+//         const image = await loadImage(base64Image);
+//         const imageName = await strategyDetection.hightlightFaces(faces, image);
+//         res.send({ imageName: imageName, faces: faces });
+//     } else {
+//         res.send({});
+//     }
+// });
